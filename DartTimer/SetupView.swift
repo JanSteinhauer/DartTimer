@@ -18,6 +18,7 @@ struct SetupView: View {
     @State private var startingScore = 501
 
     let engine: GameEngine
+    @Binding var selectedTab: DTTab
 
     var body: some View {
         NavigationStack {
@@ -40,21 +41,29 @@ struct SetupView: View {
                     }
                 }
 
+                // SetupView.swift (only the players section shown)
                 Section("Players") {
                     HStack {
                         TextField("Add player name", text: $newPlayerName)
                         Button {
-                            guard !newPlayerName.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-                            let p = DTPlayer(name: newPlayerName.trimmingCharacters(in: .whitespaces))
+                            let name = newPlayerName.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !name.isEmpty else { return }
+                            let p = DTPlayer(name: name)
                             modelContext.insert(p)
                             try? modelContext.save()
                             newPlayerName = ""
                         } label: {
                             Image(systemName: "plus.circle.fill")
-                        }.tint(.habitOrange)
+                        }
+                        .tint(.habitOrange)
                     }
+
                     if storedPlayers.isEmpty {
-                        ContentUnavailableView("No players yet", systemImage: "person.fill.badge.plus", description: Text("Create players above."))
+                        ContentUnavailableView(
+                            "No players yet",
+                            systemImage: "person.fill.badge.plus",
+                            description: Text("Create players above.")
+                        )
                     } else {
                         ForEach(storedPlayers) { p in
                             HStack {
@@ -62,9 +71,22 @@ struct SetupView: View {
                                 Text(p.name)
                                 Spacer()
                             }
+                            .swipeActions {
+                                Button(role: .destructive) {
+                                    engine.removePlayer(p.id, modelContext: modelContext)
+                                    modelContext.delete(p)
+                                    try? modelContext.save()
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
                         }
+                        // Note: .onDelete requires a List; we rely on swipeActions here.
                     }
                 }
+
+                
+
 
                 Section {
                     Button {
@@ -76,6 +98,7 @@ struct SetupView: View {
                         engine.setRules(rules)
                         engine.addPlayers(Array(storedPlayers.prefix(8))) // cap for UI sanity
                         engine.startGame(modelContext: modelContext)
+                        selectedTab = .game
                     } label: {
                         Label("Start Game", systemImage: "play.circle.fill")
                     }
@@ -83,6 +106,7 @@ struct SetupView: View {
                     .tint(.habitOrange)
                 }
             }
+            .toolbar { EditButton() }
             .navigationTitle("DartTimer")
         }
     }

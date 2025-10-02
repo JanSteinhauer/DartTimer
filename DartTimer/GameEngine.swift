@@ -30,24 +30,26 @@ final class GameEngine {
     // MARK: - Game Setup Functions
 
     func selectGameMode(_ mode: DTGameMode) {
-        // Nothing persistent yet; actual game is created in startGame()
         _selectedMode = mode
+        print("[GameEngine] Selected game mode: \(mode.rawValue)")
     }
 
     func setNumberOfPlayers(_ n: Int) {
         _pendingPlayerCount = max(1, n)
+        print("[GameEngine] Pending number of players set to: \(_pendingPlayerCount)")
     }
 
     func addPlayers(_ newPlayers: [DTPlayer]) {
         players = newPlayers
+        print("[GameEngine] Added \(newPlayers.count) players.")
     }
 
     func setRules(_ rules: DTRules) {
         _pendingRules = rules
+        print("[GameEngine] Custom rules set: doubleIn=\(rules.doubleIn), doubleOut=\(rules.doubleOut), start=\(rules.startingScore ?? 0)")
     }
 
     // MARK: - Gameplay Functions
-
     func startGame(modelContext: ModelContext) {
         let mode = _selectedMode ?? .x01_501
         let rules = _pendingRules ?? defaultRules(for: mode)
@@ -62,6 +64,7 @@ final class GameEngine {
             for id in g.playerIDs {
                 let adj = base + (g.rules.handicap[id] ?? 0)
                 g.scoreboard[id] = adj
+                print("[GameEngine] Player \(id) starting score: \(adj)")
             }
         }
 
@@ -72,11 +75,16 @@ final class GameEngine {
         self.turnDartIndex = 0
         self.winnerID = nil
         self.hasDoubledIn = []
+
+        print("[GameEngine] Game started with mode=\(mode.rawValue) and \(players.count) players.")
     }
 
     /// Enter one dart result.
     func recordThrow(player: DTPlayer, dartNumber: Int, hit: DTHitKind, modelContext: ModelContext) {
-        guard let g = game, g.isActive, player.id == currentPlayerID else { return }
+        guard let g = game, g.isActive, player.id == currentPlayerID else {
+            print("[GameEngine] ⚠️ Invalid throw: either no game active or wrong player.")
+            return
+        }
 
         // Build normalized hit
         var normalized: DTHit
@@ -90,6 +98,8 @@ final class GameEngine {
             normalized = DTHit(number: n, kind: hit)
         }
 
+        print("[GameEngine] Player \(player.name) threw: \(normalized)")
+
         // Persist throw
         let t = DTThrow(playerID: player.id, orderIndex: allThrows.count, hit: normalized)
         modelContext.insert(t)
@@ -102,12 +112,42 @@ final class GameEngine {
         // Advance dart index or turn
         if winnerID == nil {
             if turnDartIndex >= 2 {
+                print("[GameEngine] End of 3 darts, switching turn.")
                 switchTurn(modelContext: modelContext)
             } else {
                 turnDartIndex += 1
+                print("[GameEngine] Dart index advanced to \(turnDartIndex).")
             }
         }
     }
+    
+    // GameEngine.swift
+    func removePlayer(_ playerID: UUID, modelContext: ModelContext) {
+        // Remove from local list used by UI
+        players.removeAll { $0.id == playerID }
+
+        guard let g = game else { return }
+
+        // If the player is in an active/loaded game, clean references
+        if let idx = g.playerIDs.firstIndex(of: playerID) {
+            let wasCurrent = (currentPlayerID == playerID)
+            g.playerIDs.remove(at: idx)
+            g.scoreboard[playerID] = nil
+
+            // Clamp currentTurnIndex
+            if !g.playerIDs.isEmpty {
+                g.currentTurnIndex = g.currentTurnIndex % g.playerIDs.count
+                if wasCurrent { turnDartIndex = 0 } // start fresh for next player
+            } else {
+                // No players left -> end game gracefully (no winner)
+                g.isActive = false
+                winnerID = nil
+            }
+            try? modelContext.save()
+        }
+    }
+
+
 
     func calculateScore(playerID: UUID, hit: DTHit, mode: DTGameMode) -> (newValue: Int, isBust: Bool) {
         guard let g = game else { return (0, false) }
@@ -127,6 +167,7 @@ final class GameEngine {
 
             // Normal / Double-Out
             let target = current - hit.rawPoints
+            print("[GameEngine] Calculating score: current=\(current), hit=\(hit.rawPoints), target=\(target)")
             if target < 0 { return (current, true) } // bust
             if target == 0 {
                 if g.rules.doubleOut {
@@ -149,15 +190,14 @@ final class GameEngine {
         g.currentTurnIndex = (g.currentTurnIndex + 1) % g.playerIDs.count
         turnDartIndex = 0
         try? modelContext.save()
+        print("[GameEngine] ➡️ Switched turn. Current player index=\(g.currentTurnIndex)")
     }
 
     func undoLastThrow(modelContext: ModelContext) {
         guard let last = allThrows.popLast() else { return }
-        // Remove from DB
+        print("[GameEngine] Undo last throw of player=\(last.playerID)")
         modelContext.delete(last)
         try? modelContext.save()
-
-        // Recompute whole state from scratch for safety (robust & simple)
         recomputeStateFromHistory()
     }
 
@@ -336,6 +376,7 @@ final class GameEngine {
         guard let g = game else { return }
         self.winnerID = winnerID
         g.isActive = false
+        print("[GameEngine] 🎉 Game ended. Winner=\(winnerID)")
         let completed = DTCompletedGame(mode: g.mode, winnerID: winnerID, players: g.playerIDs, throwsCount: allThrows.count)
         modelContext.insert(completed)
         try? modelContext.save()

@@ -163,10 +163,11 @@ private struct HitInput: View {
                 Button {
                     submit(kind: multiplier)
                 } label: {
-                    Label("Enter", systemImage: "checkmark.circle.fill")
+                    Label("Enter", systemImage: "checkmark.circle.fill").frame(width: 80)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.habitOrange)
+                
             }
         }
     }
